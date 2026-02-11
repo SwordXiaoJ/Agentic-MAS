@@ -1,0 +1,214 @@
+# Classification System Infrastructure
+# Like Lungo - supports NATS, SLIM, and observability stack
+
+services:
+  # ========================================
+  # Message Transport
+  # ========================================
+  nats:
+    image: nats:latest
+    container_name: classification-nats
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    profiles:
+      - messaging
+      - full
+
+  slim:
+    image: ghcr.io/agntcy/slim:0.6.1
+    container_name: classification-slim
+    ports:
+      - "46357:46357"
+    environment:
+      - PASSWORD=${SLIM_PASSWORD:-password}
+    profiles:
+      - slim
+
+  # ========================================
+  # Observability Stack (optional)
+  # ========================================
+  clickhouse-server:
+    image: clickhouse/clickhouse-server:latest
+    container_name: classification-clickhouse
+    ports:
+      - "9000:9000"
+      - "8123:8123"
+    environment:
+      CLICKHOUSE_USER: admin
+      CLICKHOUSE_PASSWORD: admin
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    profiles:
+      - observability
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: classification-otel
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    depends_on:
+      clickhouse-server:
+        condition: service_healthy
+    profiles:
+      - observability
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: classification-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_INSTALL_PLUGINS=grafana-clickhouse-datasource
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    depends_on:
+      clickhouse-server:
+        condition: service_healthy
+    profiles:
+      - observability
+
+  # ========================================
+  # Classification Agents
+  # ========================================
+  medical-agent:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.agent
+    container_name: medical-agent
+    environment:
+      - AGENT_MODULE=agents.org_a_medical.main
+      - MEDICAL_AGENT_PORT=9001
+      - DEFAULT_MESSAGE_TRANSPORT=${DEFAULT_MESSAGE_TRANSPORT:-NATS}
+      - TRANSPORT_SERVER_ENDPOINT=${TRANSPORT_SERVER_ENDPOINT:-nats://nats:4222}
+      - FARM_BROADCAST_TOPIC=agents.broadcast
+    ports:
+      - "9001:9001"
+    profiles:
+      - agents
+
+  satellite-agent:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.agent
+    container_name: satellite-agent
+    environment:
+      - AGENT_MODULE=agents.org_b_satellite.main
+      - SATELLITE_AGENT_PORT=9002
+      - DEFAULT_MESSAGE_TRANSPORT=${DEFAULT_MESSAGE_TRANSPORT:-NATS}
+      - TRANSPORT_SERVER_ENDPOINT=${TRANSPORT_SERVER_ENDPOINT:-nats://nats:4222}
+      - FARM_BROADCAST_TOPIC=agents.broadcast
+    ports:
+      - "9002:9002"
+    profiles:
+      - agents
+
+  general-agent:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.agent
+    container_name: general-agent
+    environment:
+      - AGENT_MODULE=agents.org_c_general.main
+      - GENERAL_AGENT_PORT=9003
+      - DEFAULT_MESSAGE_TRANSPORT=${DEFAULT_MESSAGE_TRANSPORT:-NATS}
+      - TRANSPORT_SERVER_ENDPOINT=${TRANSPORT_SERVER_ENDPOINT:-nats://nats:4222}
+      - FARM_BROADCAST_TOPIC=agents.broadcast
+    ports:
+      - "9003:9003"
+    profiles:
+      - agents
+
+  # ========================================
+  # Planner (Supervisor)
+  # ========================================
+  planner:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.planner
+    container_name: planner
+    environment:
+      - PLANNER_PORT=8083
+      - DEFAULT_MESSAGE_TRANSPORT=${DEFAULT_MESSAGE_TRANSPORT:-NATS}
+      - TRANSPORT_SERVER_ENDPOINT=${TRANSPORT_SERVER_ENDPOINT:-nats://nats:4222}
+      - LLM_MODEL=${LLM_MODEL:-openai/gpt-4o-mini}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    ports:
+      - "8083:8083"
+    profiles:
+      - services
+
+  # ========================================
+  # Agent Directory Service (ADS) - Lungo Style
+  # ========================================
+  dir-api-server:
+    image: ghcr.io/agntcy/dir-apiserver:v0.6.1
+    container_name: classification-dir-api-server
+    ports:
+      - "8888:8888"
+      - "8889:8889"
+    environment:
+      - DIRECTORY_SERVER_LISTEN_ADDRESS=0.0.0.0:8888
+      - DIRECTORY_SERVER_AUTHN_ENABLED=false
+      - DIRECTORY_SERVER_AUTHZ_ENABLED=false
+      - DIRECTORY_SERVER_STORE_PROVIDER=oci
+      - DIRECTORY_SERVER_STORE_OCI_REGISTRY_ADDRESS=zot:5000
+      - DIRECTORY_SERVER_STORE_OCI_REPOSITORY_NAME=dir
+      - DIRECTORY_SERVER_STORE_OCI_AUTH_CONFIG_INSECURE=true
+      - DIRECTORY_SERVER_ROUTING_GOSSIPSUB_ENABLED=true
+      - DIRECTORY_SERVER_OASF_API_VALIDATION_DISABLE=true
+      - DIRECTORY_LOGGER_LOG_LEVEL=INFO
+    depends_on:
+      - zot
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://127.0.0.1:8889/healthz/ready || exit 1
+      interval: 10s
+      retries: 60
+      start_period: 10s
+    profiles:
+      - ads
+
+  dir-mcp-server:
+    image: ghcr.io/agntcy/dir-ctl:latest
+    container_name: classification-dir-mcp-server
+    stdin_open: true
+    tty: false
+    command: ["mcp", "serve"]
+    environment:
+      - DIRECTORY_CLIENT_SERVER_ADDRESS=dir-api-server:8888
+      - DIRECTORY_CLIENT_TLS_SKIP_VERIFY=true
+      - OASF_API_VALIDATION_DISABLE=true
+    depends_on:
+      - dir-api-server
+    profiles:
+      - ads
+
+  zot:
+    image: ghcr.io/project-zot/zot:v2.1.10
+    container_name: classification-zot
+    ports:
+      - "5555:5000"
+    volumes:
+      - zot-data:/var/lib/zot
+    profiles:
+      - ads
+
+  oasf-translation-service:
+    image: ghcr.io/agntcy/oasf-sdk:v1.0.0
+    container_name: classification-oasf-translation
+    ports:
+      - "31234:31234"
+    profiles:
+      - ads-publish
+
+volumes:
+  zot-data:

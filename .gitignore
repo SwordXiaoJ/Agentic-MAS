@@ -1,0 +1,19 @@
+# Virtual environment
+.venv/
+
+# Environment variables (contains API keys)
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Runtime files
+.service_pids
+
+# Node modules
+node_modules/
+
+# OS files
+.DS_Store

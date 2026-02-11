@@ -1,0 +1,12 @@
+{
+  "name": "general-tools",
+  "transport": "stdio",
+  "enabled": false,
+  "command": "npx",
+  "args": ["-y", "@anthropic/mcp-server-brave-search"],
+  "env": {
+    "BRAVE_API_KEY": ""
+  },
+  "allowed_tools": ["brave_search", "web_search"],
+  "_comment": "Set enabled=true and add your BRAVE_API_KEY to use web search"
+}

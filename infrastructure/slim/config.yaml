@@ -1,0 +1,93 @@
+# SLIM Gateway Configuration
+# Based on lungo's slim config with security preparation
+#
+# Security Phases:
+#   Phase 1 (Current): insecure: true (development)
+#   Phase 2: TLS + Basic Auth
+#   Phase 3: TLS + JWT
+#   Phase 4: mTLS + SPIRE
+
+tracing:
+  log_level: info
+  display_thread_names: true
+  display_thread_ids: true
+
+runtime:
+  n_cores: 0
+  thread_name: "slim-data-plane"
+  drain_timeout: 10s
+
+services:
+  slim/0:
+    dataplane:
+      servers:
+        - endpoint: "0.0.0.0:46357"
+
+          # ===== Authentication (Phase 2+) =====
+          # Uncomment one of the following auth blocks when ready
+          #
+          # Basic Auth (Phase 2):
+          # auth:
+          #   type: basic
+          #   username: ${env:SLIM_BASIC_USERNAME}
+          #   password: ${env:SLIM_BASIC_PASSWORD}
+          #
+          # JWT Auth (Phase 3):
+          # auth:
+          #   type: jwt
+          #   claims:
+          #     audiences: ["agntcy-network"]
+          #     issuer: "agntcy-network"
+          #   duration: 1h
+          #   key:
+          #     type: decoding
+          #     algorithm: "ES256"
+          #     format: pem
+          #     key:
+          #       file: "/certs/jwt-public.pem"
+
+          # ===== TLS Configuration =====
+          tls:
+            # Phase 1 (Current): Insecure for development
+            insecure: true
+
+            # Phase 2+: Enable TLS
+            # insecure: false
+            # source:
+            #   type: file
+            #   cert: "/certs/server-cert.pem"
+            #   key: "/certs/server-key.pem"
+            #
+            # Phase 4: mTLS (add client CA for mutual TLS)
+            # client_ca:
+            #   type: file
+            #   path: "/certs/ca-cert.pem"
+
+          # ===== Keepalive Configuration =====
+          # Prevents connection drops for idle connections
+          keepalive:
+            max_connection_idle: 7200s    # 2 hours before idle close
+            max_connection_age: 14400s    # 4 hours max connection lifetime
+            time: 60s                      # Ping interval
+            timeout: 20s                   # Ping timeout
+
+      clients: []
+
+    controller:
+      servers:
+        - endpoint: "0.0.0.0:46358"
+
+          # Controller auth (same pattern as dataplane)
+          # auth:
+          #   type: basic
+          #   username: ${env:SLIM_BASIC_USERNAME}
+          #   password: ${env:SLIM_BASIC_PASSWORD}
+
+          tls:
+            insecure: true
+            # Phase 2+:
+            # insecure: false
+            # source:
+            #   type: file
+            #   cert: "/certs/server-cert.pem"
+            #   key: "/certs/server-key.pem"

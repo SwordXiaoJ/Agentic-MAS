@@ -1,0 +1,10 @@
+{
+  "name": "medical-tools",
+  "transport": "stdio",
+  "enabled": false,
+  "command": "npx",
+  "args": ["-y", "@anthropic/mcp-server-pubmed"],
+  "env": {},
+  "allowed_tools": ["search_pubmed", "get_article", "search_clinical_trials"],
+  "_comment": "Set enabled=true and configure PubMed API key to use medical literature search"
+}

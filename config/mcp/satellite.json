@@ -1,0 +1,8 @@
+{
+  "name": "satellite-tools",
+  "transport": "http",
+  "enabled": false,
+  "url": "http://localhost:3001",
+  "allowed_tools": ["geocode", "get_satellite_data", "analyze_terrain", "get_weather"],
+  "_comment": "Set enabled=true and start a GIS/mapping MCP server on port 3001"
+}

@@ -1,0 +1,123 @@
+version: '3.8'
+
+services:
+  # Object Storage for images
+  minio:
+    image: minio/minio:latest
+    container_name: classify-minio
+    ports:
+      - "9010:9000"
+      - "9011:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - classify-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # NATS for agent discovery/announcements
+  nats:
+    image: nats:latest
+    container_name: classify-nats
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+      - "6222:6222"
+    networks:
+      - classify-network
+    command: ["-js", "-m", "8222"]
+
+  # SLIM transport (from lungo)
+  slim:
+    image: ghcr.io/agntcy/slim:0.6.1
+    container_name: classify-slim
+    profiles:
+      - slim
+    ports:
+      - "46357:46357"
+      - "46358:46358"
+    networks:
+      - classify-network
+    environment:
+      - PASSWORD=${SLIM_GATEWAY_PASSWORD:-dummy_password}
+      - CONFIG_PATH=/config.yaml
+    volumes:
+      - ./slim/config.yaml:/config.yaml
+    command: ["/slim", "--config", "/config.yaml"]
+
+  # ClickHouse for observability data
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: classify-clickhouse
+    profiles:
+      - observability
+    ports:
+      - "9009:9000"
+      - "8123:8123"
+    networks:
+      - classify-network
+    environment:
+      CLICKHOUSE_DB: otel
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # OpenTelemetry Collector
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: classify-otel-collector
+    profiles:
+      - observability
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "8889:8889"
+    networks:
+      - classify-network
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    depends_on:
+      - clickhouse
+
+  # Grafana for observability UI
+  grafana:
+    image: grafana/grafana:latest
+    container_name: classify-grafana
+    profiles:
+      - observability
+    ports:
+      - "3001:3000"
+    networks:
+      - classify-network
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana-provisioning:/etc/grafana/provisioning
+    depends_on:
+      - clickhouse
+
+networks:
+  classify-network:
+    driver: bridge
+
+volumes:
+  minio_data:
+  clickhouse_data:
+  grafana_data:
