@@ -51,7 +51,9 @@ pip install -r requirements.txt
 
 # Configure environment
 cp .env.example .env
-# Edit .env and fill in your API keys
+# Edit .env and set your LLM model and API key:
+#   LLM_MODEL=openai/gpt-4o-mini    (or other supported models)
+#   OPENAI_API_KEY=your-key-here
 ```
 
 ## Running the System (ADS Mode Recommended)
