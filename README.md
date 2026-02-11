@@ -2,19 +2,6 @@
 
 A multi-organization image classification routing system built on the AGNTCY framework. Routes classification requests across multiple organizations' agent clusters with LLM-based intent classification, verification, and automatic replanning.
 
-## Quick Start
-
-```bash
-# Static mode (hardcoded agents)
-./start_all.sh
-
-# ADS mode (dynamic agent discovery)
-./start_all.sh ads
-
-# Stop all services
-./stop_all.sh
-```
-
 ## Architecture
 
 ```
@@ -42,25 +29,6 @@ User → Gateway (8080) → Planner (8083) → [Medical/Satellite/General Agents
 | **MinIO** | 9010 | Object storage for images |
 | **ADS** | 8888 | Agent Directory Service (gRPC) |
 
-## Two Discovery Modes
-
-### Static Mode (Default)
-```bash
-./start_all.sh
-```
-- Uses hardcoded agent URLs
-- No ADS services needed
-- Simpler setup for development
-
-### ADS Mode (Dynamic)
-```bash
-./start_all.sh ads
-```
-- Discovers agents from ADS registry
-- Agents published via OASF records
-- Production-ready dynamic discovery
-
-
 ## Prerequisites
 
 - Python 3.10+
@@ -70,6 +38,10 @@ User → Gateway (8080) → Planner (8083) → [Medical/Satellite/General Agents
 ## Installation
 
 ```bash
+# Clone the repository
+git clone git@github.com:SwordXiaoJ/Agentic-MAS.git
+cd Agentic-MAS
+
 # Create virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
@@ -77,8 +49,44 @@ source .venv/bin/activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Start services
+# Configure environment
+cp .env.example .env
+# Edit .env and fill in your API keys
+```
+
+## Running the System (ADS Mode Recommended)
+
+You will need **3 terminals**:
+
+### Terminal 1 — Start backend services
+```bash
+source .venv/bin/activate
 ./start_all.sh
+```
+
+### Terminal 2 — Start ADS and publish agent records
+```bash
+./scripts/start_ads.sh
+./scripts/publish_agent_records.sh
+```
+
+### Terminal 3 — Start frontend
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+### Static Mode (Alternative)
+```bash
+./start_all.sh
+```
+- Uses hardcoded agent URLs, no ADS needed
+- Simpler but not recommended for full functionality
+
+### Stop all services
+```bash
+./stop_all.sh
 ```
 
 ## License
