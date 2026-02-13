@@ -59,6 +59,14 @@ class AgentSelection(BaseModel):
 
 # RoutingDecision removed - using rule-based logic instead of LLM
 
+class IntentGuard(BaseModel):
+    """Structured output for intent guard - checks if prompt is classification-related."""
+    is_classification: bool = Field(
+        description="True if the user's prompt is related to image classification, recognition, or identification"
+    )
+    reason: str = Field(description="Brief explanation of the decision")
+
+
 class ShouldContinue(BaseModel):
     """Structured output for reflection decision (like Auction Supervisor)"""
     should_continue: bool = Field(description="Whether to continue processing (replan) or end")
@@ -160,7 +168,17 @@ class LangGraphPlannerAgent:
 
         # Define edges (similar to Lungo's ExchangeGraph)
         workflow.add_edge(START, "supervisor")
-        workflow.add_edge("supervisor", "discover_agents")
+
+        # Conditional: intent guard may reject non-classification prompts
+        workflow.add_conditional_edges(
+            "supervisor",
+            self._after_supervisor,
+            {
+                "continue": "discover_agents",
+                "rejected": "handle_error"
+            }
+        )
+
         workflow.add_edge("discover_agents", "route_decision")
 
         # Conditional: simple vs ensemble routing
@@ -210,6 +228,49 @@ class LangGraphPlannerAgent:
 
         request = state["request"]
         prompt = request.prompt
+
+        # Step 0: Intent Guard - check if prompt is classification-related
+        if self.llm and state["iteration"] == 1:
+            try:
+                guard_llm = create_llm().with_structured_output(
+                    IntentGuard, strict=True
+                )
+                guard_sys = SystemMessage(
+                    content="""You are an intent guard for an image classification system.
+
+Your job is to determine whether the user's prompt is related to image classification, recognition, identification, or analysis.
+
+ACCEPT (is_classification=true):
+- "Classify this image"
+- "What type of medical scan is this?"
+- "Identify this satellite image"
+- "Is this a cat or a dog?"
+- "What disease does this X-ray show?"
+- Any prompt asking to analyze, classify, identify, or describe an image
+
+REJECT (is_classification=false):
+- "Write me a poem"
+- "What is the weather today?"
+- "Help me with my homework"
+- "Tell me a joke"
+- Any prompt completely unrelated to image analysis"""
+                )
+                guard_result = await guard_llm.ainvoke([
+                    guard_sys,
+                    HumanMessage(content=f"User prompt: {prompt}")
+                ])
+
+                if not guard_result.is_classification:
+                    logger.info(f"Intent guard rejected: {guard_result.reason}")
+                    state["error"] = f"NOT_CLASSIFICATION: {guard_result.reason}"
+                    state["messages"].append(
+                        AIMessage(content=f"Intent guard: rejected - {guard_result.reason}")
+                    )
+                    return state
+
+                logger.info(f"Intent guard passed: {guard_result.reason}")
+            except Exception as e:
+                logger.warning(f"Intent guard LLM failed, proceeding anyway: {e}")
 
         # Step 1: Get all available agents
         import asyncio
@@ -392,8 +453,6 @@ INSTRUCTIONS:
             reason = "Previous attempt failed, using ensemble for reliability"
         elif request.constraints.min_confidence > 0.85:
             reason = "High confidence required, using ensemble"
-        elif len(agents) >= 3:
-            reason = "Multiple agents available, single_best is efficient"
         else:
             reason = "First attempt, using single_best for speed"
 
@@ -593,25 +652,41 @@ INSTRUCTIONS:
                 data = json.loads(response_text)
                 return ClassificationResult(**data)
             else:
-                # Parse text response (format: "Label: xxx\nConfidence: 0.xx\n...")
+                # Parse text response
+                # Format: "Label: xxx\nConfidence: 0.xx\n...\nTop-3 Predictions:\n  1. label (0.95)\n..."
+                import re
                 label = response_text.strip()
                 confidence = 0.8
+                top_k = []
 
                 for line in response_text.split("\n"):
-                    if line.startswith("Label:"):
-                        label = line.split(":", 1)[1].strip()
-                    elif line.startswith("Confidence:"):
+                    line_stripped = line.strip()
+                    if line_stripped.startswith("Label:"):
+                        label = line_stripped.split(":", 1)[1].strip()
+                    elif line_stripped.startswith("Confidence:"):
                         try:
-                            confidence = float(line.split(":", 1)[1].strip())
+                            confidence = float(line_stripped.split(":", 1)[1].strip())
                         except ValueError:
                             pass
+                    else:
+                        # Parse "1. label text (0.95)" prediction lines
+                        match = re.match(r"^\d+\.\s+(.+?)\s+\(([0-9.]+)\)\s*$", line_stripped)
+                        if match:
+                            top_k.append(TopKPrediction(
+                                label=match.group(1),
+                                confidence=float(match.group(2)),
+                                rank=len(top_k) + 1
+                            ))
+
+                if not top_k:
+                    top_k = [TopKPrediction(label=label, confidence=confidence, rank=1)]
 
                 return ClassificationResult(
                     request_id=str(uuid4()),
                     agent_id=agent_id,
                     label=label,
                     confidence=confidence,
-                    top_k=[TopKPrediction(label=label, confidence=confidence, rank=1)],
+                    top_k=top_k,
                     latency_ms=0
                 )
         except Exception as e:
@@ -678,33 +753,36 @@ INSTRUCTIONS:
                 verifier_status = verification_report.status.value if verification_report else "N/A"
                 verifier_notes = verification_report.notes if verification_report else ""
 
-                # Simplified prompt (Lungo style)
                 sys_msg = SystemMessage(
-                    content=f"""You are evaluating image classification results.
+                    content="""You are a reflection judge for an image classification system.
 
-Request: {request.prompt}
+Your job is to evaluate classification results and decide whether to STOP or CONTINUE.
+
+Decision rules:
+- STOP (should_continue=false): Results meet confidence threshold, or max iterations reached
+- CONTINUE (should_continue=true): Results are poor (low confidence, errors) and retrying may help
+
+Mismatch detection:
+If agent results indicate the image does NOT match the domain in the prompt
+(e.g., a medical classifier labels it "non-medical", or a satellite classifier returns "unknown"
+for a medical image), this is a PROMPT-IMAGE MISMATCH.
+In this case: set should_continue=false AND mismatch_detected=true.
+Retrying will NOT help — the image content genuinely does not match the request.
+Explain in 'reason' what the image appears to be vs what was requested."""
+                )
+
+                user_msg = HumanMessage(
+                    content=f"""Request: {request.prompt}
 Required confidence: {request.constraints.min_confidence}
 Iteration: {state['iteration']}/{MAX_REPLANS}
 
 Results:
 {results_summary}
 
-Verifier: {verifier_status} - {verifier_notes}
-
-Decide: should we CONTINUE (retry with different strategy) or STOP (accept current results)?
-- STOP (should_continue=false): Results are good enough or max iterations reached
-- CONTINUE (should_continue=true): Results are poor and we can retry
-
-IMPORTANT - Mismatch detection:
-If agent results indicate the image does NOT belong to the domain requested in the prompt
-(e.g., a medical classifier labels the image as "non-medical image", or a satellite classifier
-labels a medical image as "unknown"), this is a PROMPT-IMAGE MISMATCH.
-In this case: set should_continue=false AND mismatch_detected=true.
-Retrying will NOT help because the image content genuinely does not match the prompt.
-Include a clear explanation in 'reason' about what the image actually appears to be vs what was requested."""
+Verifier: {verifier_status} - {verifier_notes}"""
                 )
 
-                response = await reflection_llm.ainvoke([sys_msg])
+                response = await reflection_llm.ainvoke([sys_msg, user_msg])
 
                 if response and hasattr(response, 'should_continue'):
                     if response.mismatch_detected:
@@ -839,19 +917,39 @@ Include a clear explanation in 'reason' about what the image actually appears to
 
     def _handle_error_node(self, state: PlannerState) -> PlannerState:
         """Handle errors"""
-        logger.error(f"[{state['request_id']}] Error: {state.get('error', 'Unknown')}")
+        error = state.get("error", "Unknown")
+        logger.error(f"[{state['request_id']}] Error: {error}")
 
-        state["final_response"] = {
-            "status": "FAILED",
-            "error": state.get("error", "UNKNOWN_ERROR"),
-            "intent": state.get("intent", {}),
-            "iterations": state["iteration"],
-            "workflow_messages": [msg.content for msg in state["messages"]]
-        }
+        # Intent guard rejection - use FAILED status so frontend stops polling
+        if error.startswith("NOT_CLASSIFICATION:"):
+            reason = error.split(":", 1)[1].strip()
+            state["final_response"] = {
+                "status": "FAILED",
+                "error": "NOT_CLASSIFICATION",
+                "message": f"This system is designed for image classification tasks only. {reason}",
+                "intent": state.get("intent", {}),
+                "iterations": state["iteration"],
+                "workflow_messages": [msg.content for msg in state["messages"]]
+            }
+        else:
+            state["final_response"] = {
+                "status": "FAILED",
+                "error": error,
+                "intent": state.get("intent", {}),
+                "iterations": state["iteration"],
+                "workflow_messages": [msg.content for msg in state["messages"]]
+            }
 
         return state
 
     # ========== Conditional Edge Functions ==========
+
+    def _after_supervisor(self, state: PlannerState) -> Literal["continue", "rejected"]:
+        """Check if intent guard rejected the prompt."""
+        error = state.get("error", "")
+        if error.startswith("NOT_CLASSIFICATION"):
+            return "rejected"
+        return "continue"
 
     def _should_use_ensemble(self, state: PlannerState) -> Literal["simple", "ensemble", "error"]:
         """Decide if we should use ensemble or simple routing"""
@@ -868,10 +966,8 @@ Include a clear explanation in 'reason' about what the image actually appears to
         # Use ensemble if:
         # - Previous iteration failed (iteration > 1)
         # - High confidence required
-        # - Multiple good agents available
         if (iteration > 1 or
-            request.constraints.min_confidence > 0.85 or
-            len(state["discovered_agents"]) >= 3):
+            request.constraints.min_confidence > 0.85):
             return "ensemble"
 
         return "simple"
