@@ -1,6 +1,9 @@
 # AGNTCY Multi-Organization Image Classification System
 # Python 3.12+ required (for a2a-sdk and agntcy-app-sdk)
 
+# OASF SDK packages are hosted on buf.build registry
+--extra-index-url https://buf.build/gen/python
+
 # Web frameworks
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
@@ -44,3 +47,8 @@ llama-index>=0.12.0
 llama-index-llms-litellm>=0.3.0
 llama-index-llms-openai>=0.3.0
 llama-index-llms-anthropic>=0.3.0
+
+# ADS (Agent Directory Service) - for publish_agent_records.sh
+agntcy-dir>=0.6.0
+agntcy-oasf-sdk-grpc-python
+agntcy-oasf-sdk-protocolbuffers-python
