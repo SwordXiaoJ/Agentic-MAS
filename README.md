@@ -6,20 +6,27 @@ A multi-organization image classification routing system built on the AGNTCY fra
 
 ```
 User → Gateway (8080) → Planner (8083) → [Medical/Satellite/General Agents] → Verifier → Response
-                              ↑                                                    ↓
+                              ↑                    ↕ MCP (optional)                ↓
                               └──────────────── Replan if FAIL ───────────────────┘
 ```
 
-### Components
+### Agents
 
-| Component | Port | Description |
-|-----------|------|-------------|
+| Agent | Port | Org | Framework | MCP |
+|-------|------|-----|-----------|-----|
+| **Medical Agent** | 9001 | Org A | LangGraph ReAct | Yes (default on) |
+| **Satellite Agent** | 9002 | Org B | CrewAI | No |
+| **General Agent** | 9003 | Org C | LlamaIndex Workflow | No |
+
+Each agent belongs to a different organization and independently decides whether to use MCP tools. This is configured in each agent's startup script (`scripts/start_<agent>.sh`), not globally.
+
+### Services
+
+| Service | Port | Description |
+|---------|------|-------------|
 | **Gateway** | 8080 | API entry point, image upload to MinIO |
-| **Planner** | 8083 | LangGraph workflow with LLM intent classification |
-| **Medical Agent** | 9001 | Medical image classification (X-ray, CT, MRI) |
-| **Satellite Agent** | 9002 | Satellite/aerial image classification |
-| **General Agent** | 9003 | General object/scene classification |
-| **Verifier** | - | Result verification (confidence gate, ensemble voting) |
+| **Planner** | 8083 | LangGraph supervisor, LLM agent selection, ADS discovery |
+| **MCP Server** | NATS | Medical tools (literature search, reference, confidence adjustment) |
 
 ### Infrastructure (Docker)
 
@@ -56,21 +63,29 @@ cp .env.example .env
 #   OPENAI_API_KEY=your-key-here
 ```
 
-## Running the System (ADS Mode Recommended)
+## Running the System
 
 You will need **3 terminals**:
 
-### Terminal 1 — Start backend services
-```bash
-source .venv/bin/activate
-./start_all.sh
-```
-
-### Terminal 2 — Start ADS and publish agent records
+### Terminal 1 — Start ADS (Agent Directory Service)
 ```bash
 ./scripts/start_ads.sh
 ./scripts/publish_agent_records.sh
 ```
+
+### Terminal 2 — Start backend services
+```bash
+./start_all.sh
+```
+
+This starts (in order):
+1. Infrastructure (NATS + MinIO)
+2. MCP Server (always on; agents decide individually whether to use)
+3. Medical Agent (Org A, MCP enabled)
+4. Satellite Agent (Org B)
+5. General Agent (Org C)
+6. Planner (ADS discovery)
+7. Gateway
 
 ### Terminal 3 — Start frontend
 ```bash
@@ -79,12 +94,10 @@ npm install
 npm run dev
 ```
 
-### Static Mode (Alternative)
+### SLIM transport (alternative to NATS)
 ```bash
-./start_all.sh
+./start_all.sh slim
 ```
-- Uses hardcoded agent URLs, no ADS needed
-- Simpler but not recommended for full functionality
 
 ### Stop all services
 ```bash

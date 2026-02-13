@@ -1,13 +1,18 @@
 #!/bin/bash
 # Start All Classification System (A2A)
 #
+# Infrastructure (always started):
+#   - NATS/SLIM transport
+#   - MinIO (object storage)
+#   - MCP server (agents decide individually whether to use)
+#
+# ADS (Agent Directory Service) is managed separately:
+#   ./scripts/start_ads.sh              # Start ADS
+#   ./scripts/publish_agent_records.sh  # Publish agent cards
+#
 # Usage:
-#   ./start_all.sh              # Static discovery (default, uses NATS)
-#   ./start_all.sh ads          # ADS discovery (dynamic)
-#   ./start_all.sh mcp          # Static + MCP tools enabled
+#   ./start_all.sh              # Default (NATS transport)
 #   ./start_all.sh slim         # Use SLIM transport instead of NATS
-#   ./start_all.sh ads mcp      # ADS + MCP tools enabled
-#   ./start_all.sh slim mcp     # SLIM + MCP tools enabled
 
 cd "$(dirname "$0")"
 
@@ -22,18 +27,10 @@ if [ -f .env ]; then
 fi
 
 # Parse arguments
-DISCOVERY_MODE="static"
-MCP_MODE="false"
 SLIM_MODE="false"
 
 for arg in "$@"; do
     case $arg in
-        ads)
-            DISCOVERY_MODE="ads"
-            ;;
-        mcp)
-            MCP_MODE="true"
-            ;;
         slim)
             SLIM_MODE="true"
             ;;
@@ -60,16 +57,14 @@ PID_FILE=".service_pids"
 
 echo "=============================================="
 echo "Classification System - A2A Architecture"
-echo "Discovery Mode: $([ "$DISCOVERY_MODE" == "ads" ] && echo "ADS (Dynamic)" || echo "Static (Hardcoded)")"
+echo "Discovery: ADS (start ADS separately)"
 echo "Transport: $([ "$SLIM_MODE" == "true" ] && echo "SLIM (HTTP)" || echo "NATS")"
-echo "MCP Tools: $([ "$MCP_MODE" == "true" ] && echo "Enabled" || echo "Disabled")"
+echo "MCP Server: Always On (agents decide individually)"
 echo "=============================================="
 echo ""
 
-# Calculate total steps
-TOTAL_STEPS=6
-[ "$DISCOVERY_MODE" == "ads" ] && TOTAL_STEPS=$((TOTAL_STEPS + 1))
-[ "$MCP_MODE" == "true" ] && TOTAL_STEPS=$((TOTAL_STEPS + 1))
+# Calculate total steps (MCP always included; ADS managed separately)
+TOTAL_STEPS=7
 
 CURRENT_STEP=1
 
@@ -83,32 +78,14 @@ fi
 sleep 5
 CURRENT_STEP=$((CURRENT_STEP + 1))
 
-# If ADS mode, start ADS services and publish agents
-if [ "$DISCOVERY_MODE" == "ads" ]; then
-    echo ""
-    echo "[$CURRENT_STEP/$TOTAL_STEPS] Starting ADS Services..."
-    ./scripts/start_ads.sh
-    sleep 3
-    CURRENT_STEP=$((CURRENT_STEP + 1))
-
-    echo ""
-    echo "NOTE: Agent records are NOT auto-published. Run manually when needed:"
-    echo "  ./scripts/publish_agent_records.sh"
-fi
-
-# If MCP mode, start MCP services
-if [ "$MCP_MODE" == "true" ]; then
-    echo ""
-    echo "[$CURRENT_STEP/$TOTAL_STEPS] Starting MCP Services..."
-    ./scripts/start_mcp_medical.sh &
-    echo $! >> "$PID_FILE"
-    sleep 2
-    CURRENT_STEP=$((CURRENT_STEP + 1))
-
-    # Export MCP environment variables for agents
-    export USE_MCP=true
-    export MCP_TOPIC=medical_tools_service
-fi
+# Start MCP services (always-on infrastructure; agents decide individually whether to use)
+echo ""
+echo "[$CURRENT_STEP/$TOTAL_STEPS] Starting MCP Services..."
+export MCP_TOPIC=medical_tools_service
+./scripts/start_mcp_medical.sh &
+echo $! >> "$PID_FILE"
+sleep 2
+CURRENT_STEP=$((CURRENT_STEP + 1))
 
 # Start agents in background
 echo ""
@@ -131,11 +108,7 @@ sleep 1
 CURRENT_STEP=$((CURRENT_STEP + 1))
 
 echo "[$CURRENT_STEP/$TOTAL_STEPS] Starting Planner (port 8083)..."
-if [ "$DISCOVERY_MODE" == "ads" ]; then
-    ./scripts/start_planner.sh ads &
-else
-    ./scripts/start_planner.sh &
-fi
+./scripts/start_planner.sh ads &
 echo $! >> "$PID_FILE"
 sleep 1
 CURRENT_STEP=$((CURRENT_STEP + 1))
@@ -158,16 +131,12 @@ echo "  - Satellite:  http://localhost:9002"
 echo "  - General:    http://localhost:9003"
 echo ""
 echo "Services:"
-echo "  - Planner:    http://localhost:8083"
-if [ "$DISCOVERY_MODE" == "ads" ]; then
-    echo "  - ADS:        localhost:8888 (gRPC)"
-fi
-if [ "$MCP_MODE" == "true" ]; then
-    if [ "$SLIM_MODE" == "true" ]; then
-        echo "  - MCP:        medical_tools_service (via SLIM)"
-    else
-        echo "  - MCP:        medical_tools_service (via NATS)"
-    fi
+echo "  - Planner:    http://localhost:8083 (ADS discovery)"
+echo "  - ADS:        (start separately: ./scripts/start_ads.sh)"
+if [ "$SLIM_MODE" == "true" ]; then
+    echo "  - MCP:        medical_tools_service (via SLIM)"
+else
+    echo "  - MCP:        medical_tools_service (via NATS)"
 fi
 if [ "$SLIM_MODE" == "true" ]; then
     echo "  - SLIM:       http://localhost:46357"

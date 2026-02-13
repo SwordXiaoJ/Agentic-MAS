@@ -39,7 +39,7 @@ class SatelliteClassifierAgent:
         ]
 
         # Check if LLM mode is enabled
-        self.use_llm = os.getenv("USE_LLM", "false").lower() in ("true", "1", "yes")
+        self.use_llm = os.getenv("USE_LLM", "true").lower() in ("true", "1", "yes")
         self.llm = None
 
         if self.use_llm:
@@ -59,12 +59,17 @@ class SatelliteClassifierAgent:
         image_data = await self._get_image(request["image"])
 
         # Choose classification method
+        llm_top_k = []
         if self.use_llm and self.llm:
-            label, confidence = await self._classify_with_llm(request["prompt"], image_data)
+            label, confidence, llm_top_k = await self._classify_with_llm(request["prompt"], image_data)
         else:
             label, confidence = self._classify_simulated(request["prompt"])
 
-        top_k = self._generate_top_k(label, confidence)
+        # Use LLM top-k if available, otherwise fallback
+        if llm_top_k:
+            top_k = [TopKPrediction(label=lbl, confidence=conf, rank=i+1) for i, (lbl, conf) in enumerate(llm_top_k)]
+        else:
+            top_k = self._generate_top_k(label, confidence)
         latency_ms = int((time.time() - start_time) * 1000)
 
         return ClassificationResult(
@@ -101,8 +106,9 @@ class SatelliteClassifierAgent:
             f"Analyze this satellite/aerial image and classify what you see.\n"
             f"User request: {prompt}\n\n"
             f"Respond in this exact format (nothing else):\n"
-            f"LABEL: <a concise 1-3 word classification label, e.g. 'urban area', 'farmland', 'forest'>\n"
-            f"CONFIDENCE: <confidence score between 0.0 and 1.0>"
+            f"LABEL1: <most likely classification> | CONFIDENCE1: <score 0.0-1.0>\n"
+            f"LABEL2: <second most likely> | CONFIDENCE2: <score 0.0-1.0>\n"
+            f"LABEL3: <third most likely> | CONFIDENCE3: <score 0.0-1.0>"
         )
 
         content = [{"type": "text", "text": text_instruction}]
@@ -124,20 +130,34 @@ class SatelliteClassifierAgent:
 
             label = "unclassified"
             confidence = 0.5
+            top_k = []
 
             for line in llm_output.split("\n"):
-                if line.upper().startswith("LABEL:"):
+                line_upper = line.upper().strip()
+                if "|" in line and "LABEL" in line_upper and "CONFIDENCE" in line_upper:
+                    parts = line.split("|")
+                    try:
+                        lbl = parts[0].split(":", 1)[1].strip().lower()
+                        conf = float(parts[1].split(":", 1)[1].strip())
+                        top_k.append((lbl, conf))
+                    except Exception:
+                        pass
+                elif line_upper.startswith("LABEL:"):
                     label = line.split(":", 1)[1].strip().lower()
-                elif line.upper().startswith("CONFIDENCE:"):
+                elif line_upper.startswith("CONFIDENCE:"):
                     try:
                         confidence = float(line.split(":", 1)[1].strip())
                     except Exception:
                         pass
 
-            return label, confidence
+            if top_k:
+                label, confidence = top_k[0]
+
+            return label, confidence, top_k
         except Exception as e:
             logger.error(f"LLM vision classification failed: {e}, falling back to simulated")
-            return self._classify_simulated(prompt)
+            label, confidence = self._classify_simulated(prompt)
+            return label, confidence, []
 
     async def _get_image(self, image_source: Dict[str, Any]) -> bytes:
         """Download image from presigned URL, regular URL, or decode base64"""
