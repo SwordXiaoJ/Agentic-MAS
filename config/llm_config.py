@@ -44,6 +44,9 @@ LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096"))
 # OpenAI
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
+# Gemini
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", None)
+
 # Azure OpenAI
 AZURE_API_KEY = os.getenv("AZURE_API_KEY", None)
 AZURE_API_BASE = os.getenv("AZURE_API_BASE", None)
@@ -203,6 +206,9 @@ def validate_llm_config() -> bool:
 
     if provider == "openai" and not OPENAI_API_KEY:
         logger.warning("OPENAI_API_KEY is not set")
+        return False
+    elif (provider == "google" or provider == "gemini") and not GOOGLE_API_KEY:
+        logger.warning("GOOGLE_API_KEY is not set")
         return False
     elif provider == "anthropic" and not ANTHROPIC_API_KEY:
         logger.warning("ANTHROPIC_API_KEY is not set")
