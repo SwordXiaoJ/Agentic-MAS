@@ -1,0 +1,68 @@
+{
+  "created_at": "2026-02-17T07:55:00Z",
+  "skills": [
+    {
+      "name": "documents_vision/ocr_document_classification",
+      "id": 301
+    }
+  ],
+  "version": "1.0.0",
+  "description": "An AI agent specialized in analyzing document images to extract text (OCR), parse receipts, and classify document types for administrative automation.",
+  "modules": [
+    {
+      "data": {
+        "card_data": {
+          "provider": null,
+          "supportsAuthenticatedExtendedCard": false,
+          "version": "1.0.0",
+          "iconUrl": null,
+          "description": "Extract visible text from document images, parse receipts, and classify as 'invoice', 'handwritten_note', 'chart', or 'official_form'.",
+          "url": "http://localhost:9004",
+          "securitySchemes": null,
+          "skills": [
+            {
+              "security": null,
+              "id": "document_analysis_classification",
+              "examples": [
+                "Extract and classify this scanned document image.",
+                "Is this image a receipt or an official form?",
+                "OCR and classify this handwritten note.",
+                "Parse this image for visible text and document type."
+              ],
+              "description": "Perform OCR, parse receipts, and classify document type from images.",
+              "inputModes": null,
+              "tags": [
+                "ocr",
+                "document",
+                "classification",
+                "receipt",
+                "invoice",
+                "handwritten",
+                "chart",
+                "form"
+              ],
+              "outputModes": null,
+              "name": "Document Analysis & Classification"
+            }
+          ],
+          "capabilities": {
+            "stateTransitionHistory": null,
+            "streaming": true,
+            "pushNotifications": null,
+            "extensions": null
+          },
+          "defaultOutputModes": [
+            "text",
+            "application/json"
+          ],
+          "defaultInputModes": [
+            "image/jpeg",
+            "image/png",
+            "application/pdf"
+          ]
+        }
+      },
+      "type": "agent_card"
+    }
+  ]
+}
