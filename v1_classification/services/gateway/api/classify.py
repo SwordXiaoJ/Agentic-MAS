@@ -95,7 +95,7 @@ def create_classify_api(minio_client: MinIOClient, planner_url: str) -> APIRoute
         image: UploadFile = File(...),
         prompt: str = Form(...),
         min_confidence: float = Form(0.75),
-        timeout_ms: int = Form(5000),
+        timeout_ms: int = Form(90000),
         return_top_k: int = Form(3)
     ):
         """
@@ -201,7 +201,7 @@ async def _send_to_planner(task_id: str, request: ClassificationRequest, planner
                 f"{planner_url}/plan",
                 json=request.model_dump(mode="json"),
                 headers=headers,
-                timeout=aiohttp.ClientTimeout(total=60)
+                timeout=aiohttp.ClientTimeout(total=120)
             ) as response:
                 response.raise_for_status()
                 result = await response.json()

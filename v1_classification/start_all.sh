@@ -1,153 +1,159 @@
 #!/bin/bash
-# Start All Classification System (A2A)
-#
-# Infrastructure (always started):
-#   - NATS/SLIM transport
-#   - MinIO (object storage)
-#   - MCP server (agents decide individually whether to use)
-#
-# ADS (Agent Directory Service) is managed separately:
-#   ./scripts/start_ads.sh              # Start ADS
-#   ./scripts/publish_agent_records.sh  # Publish agent cards
-#
-# Usage:
-#   ./start_all.sh              # Default (NATS transport)
-#   ./start_all.sh slim         # Use SLIM transport instead of NATS
+# Robust local dev launcher:
+# - Loads v1_classification/.env explicitly
+# - Activates .venv
+# - Cleans stale processes on known ports
+# - Starts Docker infrastructure (NATS + MinIO), then Gateway, Planner, agents in background (logs/)
+# - Starts frontend (Vite) in foreground
+# - Cleans up everything on Ctrl+C
 
-cd "$(dirname "$0")"
+set -euo pipefail
 
-# Activate virtual environment
-source .venv/bin/activate
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT_DIR"
 
-# Load environment variables from .env
-if [ -f .env ]; then
-    set -a
-    source .env
-    set +a
+ENV_FILE="$ROOT_DIR/.env"
+VENV_ACTIVATE="$ROOT_DIR/.venv/bin/activate"
+LOG_DIR="$ROOT_DIR/logs"
+PID_FILE="$LOG_DIR/.start_all.pids"
+
+mkdir -p "$LOG_DIR"
+: > "$PID_FILE"
+
+cleanup_done=0
+
+kill_port() {
+    local port="$1"
+    local pids=""
+
+    if command -v lsof >/dev/null 2>&1; then
+        pids="$(lsof -ti tcp:"$port" 2>/dev/null || true)"
+    elif command -v fuser >/dev/null 2>&1; then
+        pids="$(fuser "$port"/tcp 2>/dev/null || true)"
+    fi
+
+    if [ -n "${pids// }" ]; then
+        echo "Clearing port $port (PIDs: $pids)"
+        # shellcheck disable=SC2086
+        kill -TERM $pids 2>/dev/null || true
+        sleep 1
+        # shellcheck disable=SC2086
+        kill -KILL $pids 2>/dev/null || true
+    fi
+}
+
+cleanup() {
+    if [ "$cleanup_done" -eq 1 ]; then
+        return
+    fi
+    cleanup_done=1
+
+    echo ""
+    echo "Stopping background services..."
+
+    if [ -f "$PID_FILE" ]; then
+        while read -r pid; do
+            [ -z "$pid" ] && continue
+            kill -TERM "$pid" 2>/dev/null || true
+        done < "$PID_FILE"
+        sleep 1
+        while read -r pid; do
+            [ -z "$pid" ] && continue
+            kill -KILL "$pid" 2>/dev/null || true
+        done < "$PID_FILE"
+    fi
+
+    # Extra safety in case child shells exited but python/node stayed alive
+    kill_port "${GATEWAY_PORT:-8080}"
+    kill_port "${PLANNER_PORT:-8083}"
+    kill_port "${GENERAL_AGENT_PORT:-9003}"
+    kill_port "${MEDICAL_AGENT_PORT:-9001}"
+    kill_port "${SATELLITE_AGENT_PORT:-9002}"
+
+    echo "Cleanup complete."
+}
+
+trap cleanup INT TERM EXIT
+
+echo "Loading environment from $ENV_FILE"
+if [ ! -f "$ENV_FILE" ]; then
+    echo "Error: .env not found at $ENV_FILE"
+    exit 1
 fi
+set -a
+source "$ENV_FILE"
+set +a
 
-# Parse arguments
-SLIM_MODE="false"
-
-for arg in "$@"; do
-    case $arg in
-        slim)
-            SLIM_MODE="true"
-            ;;
-    esac
-done
-
-# Set transport based on SLIM mode
-if [ "$SLIM_MODE" == "true" ]; then
-    export DEFAULT_MESSAGE_TRANSPORT=SLIM
-    export TRANSPORT_SERVER_ENDPOINT=http://localhost:46357
-else
-    export DEFAULT_MESSAGE_TRANSPORT=NATS
-    export TRANSPORT_SERVER_ENDPOINT=nats://localhost:4222
+if [ ! -f "$VENV_ACTIVATE" ]; then
+    echo "Error: virtualenv activate script not found at $VENV_ACTIVATE"
+    exit 1
 fi
+source "$VENV_ACTIVATE"
 
-# Clean up any stale processes/containers first
-echo "Cleaning up stale processes..."
-./stop_all.sh 2>/dev/null
-echo ""
+export PYTHONPATH="$ROOT_DIR"
+export GATEWAY_PORT="${GATEWAY_PORT:-8080}"
+export PLANNER_PORT="${PLANNER_PORT:-8083}"
+export GENERAL_AGENT_PORT="${GENERAL_AGENT_PORT:-9003}"
+export MEDICAL_AGENT_PORT="${MEDICAL_AGENT_PORT:-9001}"
+export SATELLITE_AGENT_PORT="${SATELLITE_AGENT_PORT:-9002}"
+export DEFAULT_MESSAGE_TRANSPORT="${DEFAULT_MESSAGE_TRANSPORT:-NATS}"
+export TRANSPORT_SERVER_ENDPOINT="${TRANSPORT_SERVER_ENDPOINT:-nats://localhost:4222}"
 
-# Record PIDs for cleanup
-PID_FILE=".service_pids"
-> "$PID_FILE"
+echo "Pre-cleaning stale processes/ports..."
+kill_port "$GATEWAY_PORT"
+kill_port "$PLANNER_PORT"
+kill_port "$GENERAL_AGENT_PORT"
+kill_port "$MEDICAL_AGENT_PORT"
+kill_port "$SATELLITE_AGENT_PORT"
 
-echo "=============================================="
-echo "Classification System - A2A Architecture"
-echo "Discovery: ADS (start ADS separately)"
-echo "Transport: $([ "$SLIM_MODE" == "true" ] && echo "SLIM (HTTP)" || echo "NATS")"
-echo "MCP Server: Always On (agents decide individually)"
-echo "=============================================="
-echo ""
-
-# Calculate total steps (MCP always included; ADS managed separately)
-TOTAL_STEPS=7
-
-CURRENT_STEP=1
-
-# Start infrastructure (NATS + MinIO, optionally SLIM)
-echo "[$CURRENT_STEP/$TOTAL_STEPS] Starting Infrastructure..."
-if [ "$SLIM_MODE" == "true" ]; then
-    ./scripts/start_infrastructure.sh --with-slim
-else
-    ./scripts/start_infrastructure.sh
-fi
+echo "Starting infrastructure (NATS + MinIO)..."
+./scripts/start_infrastructure.sh >>"$LOG_DIR/infrastructure.log" 2>&1
+echo "  Infrastructure -> $LOG_DIR/infrastructure.log"
+echo "Waiting 5s for infrastructure containers to become ready..."
 sleep 5
-CURRENT_STEP=$((CURRENT_STEP + 1))
 
-# Start MCP services (always-on infrastructure; agents decide individually whether to use)
-echo ""
-echo "[$CURRENT_STEP/$TOTAL_STEPS] Starting MCP Services..."
-export MCP_TOPIC=medical_tools_service
-./scripts/start_mcp_medical.sh &
-echo $! >> "$PID_FILE"
-sleep 2
-CURRENT_STEP=$((CURRENT_STEP + 1))
+echo "Starting backend services in background (logs/)..."
+bash -lc "cd \"$ROOT_DIR\" && ./scripts/start_gateway.sh" >"$LOG_DIR/gateway.log" 2>&1 &
+echo "$!" >> "$PID_FILE"
+echo "  Gateway  -> $LOG_DIR/gateway.log"
 
-# Start agents in background
-echo ""
-echo "[$CURRENT_STEP/$TOTAL_STEPS] Starting Medical Agent (port 9001)..."
-./scripts/start_medical_agent.sh &
-echo $! >> "$PID_FILE"
-sleep 1
-CURRENT_STEP=$((CURRENT_STEP + 1))
+bash -lc "cd \"$ROOT_DIR\" && ./scripts/start_planner.sh" >"$LOG_DIR/planner.log" 2>&1 &
+echo "$!" >> "$PID_FILE"
+echo "  Planner  -> $LOG_DIR/planner.log"
 
-echo "[$CURRENT_STEP/$TOTAL_STEPS] Starting Satellite Agent (port 9002)..."
-./scripts/start_satellite_agent.sh &
-echo $! >> "$PID_FILE"
-sleep 1
-CURRENT_STEP=$((CURRENT_STEP + 1))
+bash -lc "cd \"$ROOT_DIR\" && ./scripts/start_general_agent.sh" >"$LOG_DIR/general_agent.log" 2>&1 &
+echo "$!" >> "$PID_FILE"
+echo "  General  -> $LOG_DIR/general_agent.log"
 
-echo "[$CURRENT_STEP/$TOTAL_STEPS] Starting General Agent (port 9003)..."
-./scripts/start_general_agent.sh &
-echo $! >> "$PID_FILE"
-sleep 1
-CURRENT_STEP=$((CURRENT_STEP + 1))
+bash -lc "cd \"$ROOT_DIR\" && ./scripts/start_medical_agent.sh" >"$LOG_DIR/medical_agent.log" 2>&1 &
+echo "$!" >> "$PID_FILE"
+echo "  Medical  -> $LOG_DIR/medical_agent.log"
 
-echo "[$CURRENT_STEP/$TOTAL_STEPS] Starting Planner (port 8083)..."
-./scripts/start_planner.sh ads &
-echo $! >> "$PID_FILE"
-sleep 1
-CURRENT_STEP=$((CURRENT_STEP + 1))
-
-echo "[$CURRENT_STEP/$TOTAL_STEPS] Starting Gateway (port 8080)..."
-./scripts/start_gateway.sh &
-echo $! >> "$PID_FILE"
+bash -lc "cd \"$ROOT_DIR\" && ./scripts/start_satellite_agent.sh" >"$LOG_DIR/satellite_agent.log" 2>&1 &
+echo "$!" >> "$PID_FILE"
+echo "  Satellite -> $LOG_DIR/satellite_agent.log"
 
 echo ""
-echo "=============================================="
-echo "All Services Started!"
-echo "=============================================="
+echo "Waiting for Gateway to come online on port $GATEWAY_PORT..."
+while true; do
+    if command -v nc >/dev/null 2>&1; then
+        if nc -z 127.0.0.1 "$GATEWAY_PORT" >/dev/null 2>&1; then
+            break
+        fi
+    elif command -v curl >/dev/null 2>&1; then
+        if curl -sSf "http://127.0.0.1:$GATEWAY_PORT/health" >/dev/null 2>&1; then
+            break
+        fi
+    else
+        # Fallback to bash /dev/tcp if nc/curl unavailable
+        if (echo >/dev/tcp/127.0.0.1/"$GATEWAY_PORT") >/dev/null 2>&1; then
+            break
+        fi
+    fi
+    sleep 1
+done
+echo "Gateway is online."
 echo ""
-echo "Gateway (entry point):"
-echo "  - Gateway:    http://localhost:8080"
-echo ""
-echo "Agents:"
-echo "  - Medical:    http://localhost:9001"
-echo "  - Satellite:  http://localhost:9002"
-echo "  - General:    http://localhost:9003"
-echo ""
-echo "Services:"
-echo "  - Planner:    http://localhost:8083 (ADS discovery)"
-echo "  - ADS:        (start separately: ./scripts/start_ads.sh)"
-if [ "$SLIM_MODE" == "true" ]; then
-    echo "  - MCP:        medical_tools_service (via SLIM)"
-else
-    echo "  - MCP:        medical_tools_service (via NATS)"
-fi
-if [ "$SLIM_MODE" == "true" ]; then
-    echo "  - SLIM:       http://localhost:46357"
-fi
-echo ""
-echo "Usage:"
-echo "  curl -X POST http://localhost:8080/v1/classify -F 'image=@test.jpg' -F 'prompt=Classify this image'"
-echo ""
-echo "Press Ctrl+C to stop all services"
-
-# Trap Ctrl+C to cleanly stop all services
-trap './stop_all.sh 2>/dev/null; exit 0' INT TERM
-
-wait
+echo "Launching frontend in foreground (Ctrl+C stops all services)..."
+cd "$ROOT_DIR/frontend"
+npm run dev

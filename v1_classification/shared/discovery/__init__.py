@@ -12,7 +12,7 @@ Usage:
 """
 from shared.discovery.base import AgentDiscovery
 from shared.discovery.static_discovery import StaticAgentDiscovery
-from shared.discovery.ads_discovery import ADSAgentDiscovery
+# from shared.discovery.ads_discovery import ADSAgentDiscovery
 
 __all__ = [
     "AgentDiscovery",

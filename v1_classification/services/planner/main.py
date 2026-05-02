@@ -6,34 +6,35 @@ import os
 import sys
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 import uvicorn
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
+load_dotenv()
 
 from shared.utils.logging import setup_logger
 from shared.schemas import ClassificationRequest
-from shared.discovery import AgentDiscovery, StaticAgentDiscovery, ADSAgentDiscovery
+from shared.discovery.base import AgentDiscovery
+from shared.discovery.static_discovery import StaticAgentDiscovery
 
 # Import LangGraph planner
 from services.planner.agent_langgraph import LangGraphPlannerAgent
 
 logger = setup_logger("planner", level="INFO")
 
-# Initialize IOA Observe SDK
-try:
-    from ioa_observe.sdk import Observe
-    from ioa_observe.sdk.tracing.context_utils import set_context_from_headers
-    Observe.init(
-        app_name="classification-planner",
-        api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT", "http://localhost:4318"),
-    )
-    _observe_available = True
-    logger.info("IOA Observe SDK initialized for Planner")
-except ImportError:
-    _observe_available = False
-    logger.warning("ioa-observe-sdk not installed, observability disabled")
+# IOA Observe / OTLP export disabled: Observe.init can block or hang when no collector on 4318.
+# try:
+#     from ioa_observe.sdk import Observe
+#     from ioa_observe.sdk.tracing.context_utils import set_context_from_headers
+#     Observe.init(
+#         app_name="classification-planner",
+#         api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT", "http://localhost:4318"),
+#     )
+#     logger.info("IOA Observe SDK initialized for Planner")
+# except ImportError:
+#     logger.warning("ioa-observe-sdk not installed, observability disabled")
 
 # Global planner agent
 planner = None
@@ -52,6 +53,7 @@ async def lifespan(app: FastAPI):
     discovery_mode = os.getenv("DISCOVERY_MODE", "static").lower()
 
     if discovery_mode == "ads":
+        from shared.discovery.ads_discovery import ADSAgentDiscovery
         ads_address = os.getenv("ADS_SERVER_ADDRESS", "localhost:8888")
         discovery = ADSAgentDiscovery(server_address=ads_address)
         logger.info(f"Using ADS discovery (address: {ads_address})")
@@ -94,10 +96,6 @@ async def plan_classification(request: ClassificationRequest, raw_request: Reque
     """
     if not planner:
         raise HTTPException(status_code=503, detail="Planner not initialized")
-
-    # Restore observe tracing context propagated from Gateway
-    if _observe_available:
-        set_context_from_headers(dict(raw_request.headers))
 
     try:
         result = await planner.plan_and_execute(request)

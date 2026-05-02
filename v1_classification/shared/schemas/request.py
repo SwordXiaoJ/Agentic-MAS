@@ -18,7 +18,7 @@ class ImageSource(BaseModel):
 
 class ClassificationConstraints(BaseModel):
     """Constraints for classification task"""
-    timeout_ms: int = Field(5000, description="Task timeout in milliseconds")
+    timeout_ms: int = Field(90000, description="Task timeout in milliseconds")
     min_confidence: float = Field(0.75, ge=0, le=1, description="Minimum confidence threshold")
     return_top_k: int = Field(3, ge=1, description="Number of top predictions to return")
     require_verification: bool = Field(True, description="Whether to verify results")
@@ -51,7 +51,7 @@ class ClassificationRequest(BaseModel):
                 },
                 "prompt": "Classify this chest X-ray: pneumonia, tuberculosis, or normal",
                 "constraints": {
-                    "timeout_ms": 5000,
+                    "timeout_ms": 90000,
                     "min_confidence": 0.8,
                     "return_top_k": 3
                 }

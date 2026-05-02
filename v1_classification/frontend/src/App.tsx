@@ -104,7 +104,7 @@ function App() {
   useEffect(() => {
     const fetchSuggestedPrompts = async () => {
       try {
-        const response = await axios.get('/v1/suggested-prompts')
+        const response = await axios.get('/v1/suggested-prompts', { timeout: 30000 })
         setSuggestedPrompts(response.data)
       } catch (err) {
         console.error('Failed to fetch suggested prompts:', err)
@@ -152,12 +152,12 @@ function App() {
 
   const pollForResult = async (taskId: string) => {
     setIsPolling(true)
-    const maxAttempts = 60
+    const maxAttempts = 120
     let attempts = 0
 
     while (attempts < maxAttempts) {
       try {
-        const response = await axios.get(`/v1/classify/${taskId}`)
+        const response = await axios.get(`/v1/classify/${taskId}`, { timeout: 120000 })
         const data = response.data
 
         if (data.status === 'COMPLETED' || data.status === 'COMPLETED_WITH_WARNING' || data.status === 'FAILED') {
@@ -213,6 +213,7 @@ function App() {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
+        timeout: 120000,
       })
 
       const { task_id } = response.data

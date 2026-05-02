@@ -15,7 +15,10 @@ from shared.schemas import (
 )
 from .confidence_gate import ConfidenceGate
 from .ensemble_vote import EnsembleVoter
-from .augmentation_test import AugmentationStabilityTester
+try:
+    from .augmentation_test import AugmentationStabilityTester
+except ImportError:
+    AugmentationStabilityTester = None
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +38,15 @@ class Verifier:
         self.ensemble_voter = EnsembleVoter(
             agreement_threshold=self.config.ensemble_agreement_threshold
         )
-        self.augmentation_tester = AugmentationStabilityTester(
-            stability_threshold=self.config.augmentation_stability_threshold
-        )
+        if AugmentationStabilityTester is not None:
+            self.augmentation_tester = AugmentationStabilityTester(
+                stability_threshold=self.config.augmentation_stability_threshold
+            )
+        else:
+            self.augmentation_tester = None
+            logger.warning(
+                "AugmentationStabilityTester is unavailable; augmentation verification is disabled"
+            )
 
     async def verify(
         self,
@@ -81,7 +90,12 @@ class Verifier:
             tests_performed.append(ensemble_test)
 
         # Test 3: Augmentation stability (if enabled)
-        if self.config.enable_augmentation_test and agent_url and slim_client:
+        if (
+            self.config.enable_augmentation_test
+            and self.augmentation_tester is not None
+            and agent_url
+            and slim_client
+        ):
             aug_test = await self.augmentation_tester.verify(
                 primary_result,
                 agent_url,

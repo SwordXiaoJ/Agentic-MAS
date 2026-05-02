@@ -104,20 +104,25 @@ async def send_message_to_agent(
         # Send and get response
         response = await client.send_message(request)
         logger.info(f"Response received from {agent_card.name}")
-        
-        # Parse response (Lungo style)
-        if response.root.result and response.root.result.parts:
-            for part in response.root.result.parts:
-                if hasattr(part.root, "text"):
-                    return {
-                        "status": "success",
-                        "response": part.root.text,
-                        "agent": agent_card.name
-                    }
-        
-        if response.root.error:
-            raise A2AAgentError(str(response.root.error))
-        
+
+        root = response.root
+        # Success vs JSON-RPC error: error payloads may not have .result (AttributeError if unchecked).
+        rpc_error = getattr(root, "error", None)
+        if rpc_error:
+            raise A2AAgentError(str(rpc_error))
+
+        result = getattr(root, "result", None)
+        if result is not None:
+            parts = getattr(result, "parts", None)
+            if parts:
+                for part in parts:
+                    if hasattr(part.root, "text"):
+                        return {
+                            "status": "success",
+                            "response": part.root.text,
+                            "agent": agent_card.name
+                        }
+
         return {
             "status": "error",
             "error": "No valid response",

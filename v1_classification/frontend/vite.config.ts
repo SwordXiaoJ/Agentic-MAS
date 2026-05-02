@@ -9,10 +9,12 @@ export default defineConfig({
       '/classify': {
         target: 'http://localhost:8080',
         changeOrigin: true,
+        timeout: 120000,
       },
       '/v1': {
         target: 'http://localhost:8080',
         changeOrigin: true,
+        timeout: 120000,
       },
     },
   },

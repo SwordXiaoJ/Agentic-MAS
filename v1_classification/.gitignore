@@ -142,3 +142,7 @@ cython_debug/
 # PyInstaller
 *.manifest
 *.spec
+.env
+
+#logs
+logs/
