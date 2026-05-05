@@ -24,17 +24,20 @@ from services.planner.agent_langgraph import LangGraphPlannerAgent
 
 logger = setup_logger("planner", level="INFO")
 
-# IOA Observe / OTLP export disabled: Observe.init can block or hang when no collector on 4318.
-# try:
-#     from ioa_observe.sdk import Observe
-#     from ioa_observe.sdk.tracing.context_utils import set_context_from_headers
-#     Observe.init(
-#         app_name="classification-planner",
-#         api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT", "http://localhost:4318"),
-#     )
-#     logger.info("IOA Observe SDK initialized for Planner")
-# except ImportError:
-#     logger.warning("ioa-observe-sdk not installed, observability disabled")
+OBSERVE_ENABLED = os.getenv("OBSERVE_ENABLED", "false").lower() in ("1", "true", "yes")
+if OBSERVE_ENABLED:
+    try:
+        from ioa_observe.sdk import Observe
+
+        Observe.init(
+            app_name="classification-planner",
+            api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT", "http://localhost:4318"),
+        )
+        logger.info("IOA Observe SDK initialized for Planner")
+    except ImportError:
+        logger.warning("ioa-observe-sdk not installed, observability disabled")
+else:
+    logger.info("Observability disabled (set OBSERVE_ENABLED=true to enable OTLP export)")
 
 # Global planner agent
 planner = None

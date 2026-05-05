@@ -100,6 +100,7 @@ export SATELLITE_AGENT_PORT="${SATELLITE_AGENT_PORT:-9002}"
 export DOCUMENT_AGENT_PORT="${DOCUMENT_AGENT_PORT:-9004}"
 export DEFAULT_MESSAGE_TRANSPORT="${DEFAULT_MESSAGE_TRANSPORT:-NATS}"
 export TRANSPORT_SERVER_ENDPOINT="${TRANSPORT_SERVER_ENDPOINT:-nats://localhost:4222}"
+export OBSERVE_ENABLED="${OBSERVE_ENABLED:-false}"
 
 echo "Pre-cleaning stale processes/ports..."
 kill_port "$GATEWAY_PORT"
@@ -109,8 +110,13 @@ kill_port "$MEDICAL_AGENT_PORT"
 kill_port "$SATELLITE_AGENT_PORT"
 kill_port "$DOCUMENT_AGENT_PORT"
 
-echo "Starting infrastructure (NATS + MinIO)..."
-./scripts/start_infrastructure.sh >>"$LOG_DIR/infrastructure.log" 2>&1
+if [ "$OBSERVE_ENABLED" = "true" ]; then
+    echo "Starting infrastructure (NATS + MinIO + Observability)..."
+    ./scripts/start_infrastructure.sh --full >>"$LOG_DIR/infrastructure.log" 2>&1
+else
+    echo "Starting infrastructure (NATS + MinIO)..."
+    ./scripts/start_infrastructure.sh >>"$LOG_DIR/infrastructure.log" 2>&1
+fi
 echo "  Infrastructure -> $LOG_DIR/infrastructure.log"
 echo "Waiting 5s for infrastructure containers to become ready..."
 sleep 5

@@ -60,6 +60,13 @@ logger = logging.getLogger(__name__)
 MAX_REPLANS = 3
 
 
+def _agent_display_name(name: str | None) -> str | None:
+    """Normalize SelectedAgent.name for API/UI (omit blank)."""
+    if not name or not str(name).strip():
+        return None
+    return str(name).strip()
+
+
 def _parse_document_analysis_response(response_text: str) -> DocumentAnalysisSummary | None:
     """Parse Org D document agent text output (JSON block appended by executor)."""
     import json
@@ -628,7 +635,13 @@ INSTRUCTIONS:
                     )
 
                     if result.get("status") == "success":
-                        results.append(self._parse_classification_result(result, primary.agent_id))
+                        results.append(
+                            self._parse_classification_result(
+                                result,
+                                primary.agent_id,
+                                _agent_display_name(primary.name),
+                            )
+                        )
 
                 except A2AAgentError as e:
                     logger.error(f"Primary agent failed: {e}")
@@ -644,7 +657,13 @@ INSTRUCTIONS:
                                 task_payload
                             )
                             if result.get("status") == "success":
-                                results.append(self._parse_classification_result(result, secondary.agent_id))
+                                results.append(
+                                    self._parse_classification_result(
+                                        result,
+                                        secondary.agent_id,
+                                        _agent_display_name(secondary.name),
+                                    )
+                                )
                         except A2AAgentError as e2:
                             logger.error(f"Secondary agent failed: {e2}")
 
@@ -663,8 +682,14 @@ INSTRUCTIONS:
 
                 for i, result in enumerate(batch_results):
                     if result.get("status") == "success":
-                        agent_id = route_decision.selected_agents[i].agent_id
-                        results.append(self._parse_classification_result(result, agent_id))
+                        sel = route_decision.selected_agents[i]
+                        results.append(
+                            self._parse_classification_result(
+                                result,
+                                sel.agent_id,
+                                _agent_display_name(sel.name),
+                            )
+                        )
 
             state["results"] = results
             state["messages"].append(
@@ -681,7 +706,12 @@ INSTRUCTIONS:
 
         return state
 
-    def _parse_classification_result(self, response: Dict[str, Any], agent_id: str) -> ClassificationResult:
+    def _parse_classification_result(
+        self,
+        response: Dict[str, Any],
+        agent_id: str,
+        agent_display_name: str | None = None,
+    ) -> ClassificationResult:
         """Parse A2A response into ClassificationResult"""
         try:
             import json
@@ -695,6 +725,7 @@ INSTRUCTIONS:
                 return ClassificationResult(
                     request_id=str(uuid4()),
                     agent_id=agent_id,
+                    agent_display_name=agent_display_name,
                     label=label_display,
                     confidence=conf,
                     top_k=[TopKPrediction(label=label_display, confidence=conf, rank=1)],
@@ -705,6 +736,10 @@ INSTRUCTIONS:
             # Try to parse as JSON
             if response_text.startswith("{"):
                 data = json.loads(response_text)
+                if not isinstance(data, dict):
+                    raise TypeError("Agent JSON response is not an object")
+                if agent_display_name is not None:
+                    data["agent_display_name"] = data.get("agent_display_name") or agent_display_name
                 return ClassificationResult(**data)
             else:
                 # Parse text response
@@ -765,6 +800,7 @@ INSTRUCTIONS:
                 return ClassificationResult(
                     request_id=str(uuid4()),
                     agent_id=agent_id,
+                    agent_display_name=agent_display_name,
                     label=label,
                     confidence=confidence,
                     top_k=top_k,
@@ -778,6 +814,7 @@ INSTRUCTIONS:
             return ClassificationResult(
                 request_id=str(uuid4()),
                 agent_id=agent_id,
+                agent_display_name=agent_display_name,
                 label="parse_error",
                 confidence=0.0,
                 top_k=[TopKPrediction(label="parse_error", confidence=0.0, rank=1)],

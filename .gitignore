@@ -17,3 +17,8 @@ node_modules/
 
 # OS files
 .DS_Store
+
+# Cursor
+.cursor/
+frontend/
+v1_classification/scripts/debug_frontend_path.sh

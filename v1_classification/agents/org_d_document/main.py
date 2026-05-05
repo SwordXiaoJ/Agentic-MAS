@@ -35,6 +35,7 @@ DEFAULT_MESSAGE_TRANSPORT = os.getenv("DEFAULT_MESSAGE_TRANSPORT", "NATS")
 TRANSPORT_SERVER_ENDPOINT = os.getenv("TRANSPORT_SERVER_ENDPOINT", "nats://localhost:4222")
 FARM_BROADCAST_TOPIC = os.getenv("FARM_BROADCAST_TOPIC", "agents.broadcast")
 ENABLE_HTTP = os.getenv("ENABLE_HTTP", "true").lower() in ("true", "1", "yes")
+OBSERVE_ENABLED = os.getenv("OBSERVE_ENABLED", "false").lower() in ("1", "true", "yes")
 
 HTTP_PORT = int(os.getenv("DOCUMENT_AGENT_PORT", "9004"))
 HTTP_HOST = "0.0.0.0"
@@ -43,7 +44,21 @@ security_config = None
 if SECURITY_CONFIG_AVAILABLE:
     security_config = get_security_config()
 
-factory = AgntcyFactory("agntcy_network.document_agent", enable_tracing=False)
+if OBSERVE_ENABLED:
+    try:
+        from ioa_observe.sdk import Observe
+
+        Observe.init(
+            app_name="document-agent",
+            api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT", "http://localhost:4318"),
+        )
+        print("IOA Observe SDK initialized for Document Agent")
+    except ImportError:
+        print("ioa-observe-sdk not installed, observability disabled")
+else:
+    print("Observability disabled (set OBSERVE_ENABLED=true to enable OTLP export)")
+
+factory = AgntcyFactory("agntcy_network.document_agent", enable_tracing=OBSERVE_ENABLED)
 
 
 async def run_http_server(server):

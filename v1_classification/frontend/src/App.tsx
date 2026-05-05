@@ -22,6 +22,8 @@ interface ClassificationResult {
   confidence?: number
   top_k?: Array<{ label: string; confidence: number }>
   agent_name?: string
+  /** Human-readable agent title from discovery (shown next to agent id) */
+  agent_display_name?: string | null
   error?: string
   latency_ms?: number
   mismatch_warning?: string
@@ -216,6 +218,7 @@ function App() {
             confidence: classificationResult.confidence,
             top_k: classificationResult.top_k,
             agent_name: classificationResult.agent_id,
+            agent_display_name: classificationResult.agent_display_name ?? undefined,
             error: plannerResult.message || data.error || plannerResult.error,
             mismatch_warning: plannerResult.mismatch_warning,
             // MCP enhancement fields
@@ -637,7 +640,15 @@ function App() {
                 {/* Agent Info */}
                 {result.agent_name && (
                   <div className="text-sm text-gray-500 pt-2 border-t">
-                    Processed by: <span className="font-medium">{result.agent_name}</span>
+                    Processed by:{' '}
+                    <span className="font-medium text-gray-700">
+                      {result.agent_name}
+                      {result.agent_display_name ? (
+                        <span className="text-gray-600 font-normal">
+                          {' '}({result.agent_display_name})
+                        </span>
+                      ) : null}
+                    </span>
                   </div>
                 )}
 

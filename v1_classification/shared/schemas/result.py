@@ -31,6 +31,10 @@ class ClassificationResult(BaseModel):
     """Result from a single classifier agent"""
     request_id: str
     agent_id: str
+    agent_display_name: Optional[str] = Field(
+        None,
+        description="Human-readable agent title from discovery/card (for UI)",
+    )
     label: str = Field(..., description="Top predicted class")
     confidence: float = Field(..., ge=0, le=1, description="Confidence score")
     top_k: List[TopKPrediction] = Field(..., description="Top-K predictions")

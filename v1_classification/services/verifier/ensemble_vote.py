@@ -124,5 +124,6 @@ class EnsembleVoter:
         ensemble_result.label = majority_label
         ensemble_result.confidence = avg_confidence
         ensemble_result.agent_id = "ensemble"
+        ensemble_result.agent_display_name = None
 
         return ensemble_result

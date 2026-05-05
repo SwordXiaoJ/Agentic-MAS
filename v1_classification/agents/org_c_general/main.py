@@ -46,16 +46,20 @@ security_config = None
 if SECURITY_CONFIG_AVAILABLE:
     security_config = get_security_config()
 
-# IOA Observe / OTLP export disabled: Observe.init can block or hang when no collector on 4318.
-# try:
-#     from ioa_observe.sdk import Observe
-#     Observe.init(
-#         app_name="general-agent",
-#         api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT", "http://localhost:4318"),
-#     )
-#     print("IOA Observe SDK initialized for General Agent")
-# except ImportError:
-#     print("ioa-observe-sdk not installed, observability disabled")
+OBSERVE_ENABLED = os.getenv("OBSERVE_ENABLED", "false").lower() in ("1", "true", "yes")
+if OBSERVE_ENABLED:
+    try:
+        from ioa_observe.sdk import Observe
+
+        Observe.init(
+            app_name="general-agent",
+            api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT", "http://localhost:4318"),
+        )
+        print("IOA Observe SDK initialized for General Agent")
+    except ImportError:
+        print("ioa-observe-sdk not installed, observability disabled")
+else:
+    print("Observability disabled (set OBSERVE_ENABLED=true to enable OTLP export)")
 
 factory = AgntcyFactory("agntcy_network.general_agent", enable_tracing=False)
 
