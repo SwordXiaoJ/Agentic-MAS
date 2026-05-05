@@ -3,7 +3,7 @@
 # - Loads v1_classification/.env explicitly
 # - Activates .venv
 # - Cleans stale processes on known ports
-# - Starts Docker infrastructure (NATS + MinIO), then Gateway, Planner, agents in background (logs/)
+# - Starts Docker infrastructure (NATS + MinIO), then Gateway, Planner, all agents (incl. Org D document) in background (logs/)
 # - Starts frontend (Vite) in foreground
 # - Cleans up everything on Ctrl+C
 
@@ -69,6 +69,7 @@ cleanup() {
     kill_port "${GENERAL_AGENT_PORT:-9003}"
     kill_port "${MEDICAL_AGENT_PORT:-9001}"
     kill_port "${SATELLITE_AGENT_PORT:-9002}"
+    kill_port "${DOCUMENT_AGENT_PORT:-9004}"
 
     echo "Cleanup complete."
 }
@@ -96,6 +97,7 @@ export PLANNER_PORT="${PLANNER_PORT:-8083}"
 export GENERAL_AGENT_PORT="${GENERAL_AGENT_PORT:-9003}"
 export MEDICAL_AGENT_PORT="${MEDICAL_AGENT_PORT:-9001}"
 export SATELLITE_AGENT_PORT="${SATELLITE_AGENT_PORT:-9002}"
+export DOCUMENT_AGENT_PORT="${DOCUMENT_AGENT_PORT:-9004}"
 export DEFAULT_MESSAGE_TRANSPORT="${DEFAULT_MESSAGE_TRANSPORT:-NATS}"
 export TRANSPORT_SERVER_ENDPOINT="${TRANSPORT_SERVER_ENDPOINT:-nats://localhost:4222}"
 
@@ -105,6 +107,7 @@ kill_port "$PLANNER_PORT"
 kill_port "$GENERAL_AGENT_PORT"
 kill_port "$MEDICAL_AGENT_PORT"
 kill_port "$SATELLITE_AGENT_PORT"
+kill_port "$DOCUMENT_AGENT_PORT"
 
 echo "Starting infrastructure (NATS + MinIO)..."
 ./scripts/start_infrastructure.sh >>"$LOG_DIR/infrastructure.log" 2>&1
@@ -132,6 +135,10 @@ echo "  Medical  -> $LOG_DIR/medical_agent.log"
 bash -lc "cd \"$ROOT_DIR\" && ./scripts/start_satellite_agent.sh" >"$LOG_DIR/satellite_agent.log" 2>&1 &
 echo "$!" >> "$PID_FILE"
 echo "  Satellite -> $LOG_DIR/satellite_agent.log"
+
+bash -lc "cd \"$ROOT_DIR\" && ./scripts/start_document_agent.sh" >"$LOG_DIR/document_agent.log" 2>&1 &
+echo "$!" >> "$PID_FILE"
+echo "  Document  -> $LOG_DIR/document_agent.log"
 
 echo ""
 echo "Waiting for Gateway to come online on port $GATEWAY_PORT..."

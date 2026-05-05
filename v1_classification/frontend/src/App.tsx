@@ -9,6 +9,12 @@ interface SuggestedPrompt {
   domain: string
 }
 
+interface DocumentAnalysisSummary {
+  document_type: string
+  extracted_text: string
+  confidence: number
+}
+
 interface ClassificationResult {
   task_id: string
   status: string
@@ -22,6 +28,8 @@ interface ClassificationResult {
   // MCP enhancement fields
   mcp_enhanced?: boolean
   mcp_context?: Record<string, string>
+  /** Org D document agent structured fields */
+  document_analysis?: DocumentAnalysisSummary | null
 }
 
 // Format raw agent ID to readable name
@@ -89,6 +97,12 @@ function getConfidenceColor(confidence: number): { text: string; bar: string } {
   return { text: 'text-red-600', bar: 'bg-red-500' }
 }
 
+function formatDocumentType(raw: string): string {
+  const s = raw.replace(/_/g, ' ').trim()
+  if (!s) return 'Other'
+  return s.replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
 function App() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
@@ -99,6 +113,28 @@ function App() {
   const [prompt, setPrompt] = useState<string>('Classify this image and identify what it contains.')
   const [suggestedPrompts, setSuggestedPrompts] = useState<SuggestedPrompt[]>([])
   const [showPromptDropdown, setShowPromptDropdown] = useState(false)
+  const debugRunId = `run-${Date.now()}`
+
+  const debugLog = useCallback((hypothesisId: string, location: string, message: string, data: Record<string, unknown>) => {
+    // #region agent log
+    fetch('http://127.0.0.1:7853/ingest/4a698e93-71f9-4eae-81e8-6f36a16ff469', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Debug-Session-Id': '166e84',
+      },
+      body: JSON.stringify({
+        sessionId: '166e84',
+        runId: debugRunId,
+        hypothesisId,
+        location,
+        message,
+        data,
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {})
+    // #endregion
+  }, [debugRunId])
 
   // Fetch suggested prompts on mount
   useEffect(() => {
@@ -107,6 +143,13 @@ function App() {
         const response = await axios.get('/v1/suggested-prompts', { timeout: 30000 })
         setSuggestedPrompts(response.data)
       } catch (err) {
+        const axiosErr = err as any
+        debugLog('H1', 'frontend/src/App.tsx:131', 'Suggested prompts request failed', {
+          route: '/v1/suggested-prompts',
+          code: axiosErr?.code ?? null,
+          status: axiosErr?.response?.status ?? null,
+          message: axiosErr?.message ?? 'unknown',
+        })
         console.error('Failed to fetch suggested prompts:', err)
       }
     }
@@ -177,7 +220,8 @@ function App() {
             mismatch_warning: plannerResult.mismatch_warning,
             // MCP enhancement fields
             mcp_enhanced: classificationResult.mcp_enhanced,
-            mcp_context: classificationResult.mcp_context
+            mcp_context: classificationResult.mcp_context,
+            document_analysis: classificationResult.document_analysis ?? undefined,
           }
           setResult(normalized)
           setIsPolling(false)
@@ -187,6 +231,14 @@ function App() {
         await new Promise(resolve => setTimeout(resolve, 1000))
         attempts++
       } catch (err) {
+        const axiosErr = err as any
+        debugLog('H3', 'frontend/src/App.tsx:221', 'Polling request failed', {
+          route: `/v1/classify/${taskId}`,
+          attempt: attempts + 1,
+          code: axiosErr?.code ?? null,
+          status: axiosErr?.response?.status ?? null,
+          message: axiosErr?.message ?? 'unknown',
+        })
         console.error('Polling error:', err)
         attempts++
         await new Promise(resolve => setTimeout(resolve, 2000))
@@ -217,11 +269,22 @@ function App() {
       })
 
       const { task_id } = response.data
+      debugLog('H2', 'frontend/src/App.tsx:249', 'Classify request accepted', {
+        route: '/v1/classify',
+        taskId: task_id,
+      })
       setIsUploading(false)
 
       // Start polling for results
       await pollForResult(task_id)
     } catch (err: any) {
+      debugLog('H2', 'frontend/src/App.tsx:257', 'Classify request failed', {
+        route: '/v1/classify',
+        code: err?.code ?? null,
+        status: err?.response?.status ?? null,
+        message: err?.message ?? 'unknown',
+        detail: err?.response?.data?.detail ?? null,
+      })
       setIsUploading(false)
       setError(err.response?.data?.detail || err.message || 'Upload failed')
     }
@@ -275,6 +338,7 @@ function App() {
                             <span className={`text-xs px-2 py-0.5 rounded-full ${
                               sp.domain === 'medical' ? 'bg-red-100 text-red-700' :
                               sp.domain === 'satellite' ? 'bg-green-100 text-green-700' :
+                              sp.domain === 'document' ? 'bg-amber-100 text-amber-800' :
                               'bg-blue-100 text-blue-700'
                             }`}>
                               {sp.domain}
@@ -432,8 +496,45 @@ function App() {
                   </div>
                 )}
 
-                {/* Main Result */}
-                {result.label && (
+                {/* Document analyzer — readable layout */}
+                {result.document_analysis && (
+                  <div className="rounded-xl p-6 bg-gradient-to-br from-amber-50 via-yellow-50 to-orange-50 border border-amber-200/80 shadow-sm">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-amber-800 mb-3">
+                      Document analysis
+                    </p>
+                    <div className="flex flex-wrap items-baseline gap-2 mb-1">
+                      <p className="text-sm text-gray-600">Document type</p>
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-200/90 text-amber-900">
+                        {formatDocumentType(result.document_analysis.document_type)}
+                      </span>
+                    </div>
+                    <div className="mt-4">
+                      <p className="text-sm font-medium text-gray-700 mb-2">Summary & extracted content</p>
+                      <div className="rounded-lg bg-white/90 border border-amber-100 px-4 py-3 text-sm text-gray-800 leading-relaxed whitespace-pre-wrap shadow-inner">
+                        {result.document_analysis.extracted_text}
+                      </div>
+                    </div>
+                    {result.document_analysis.confidence !== undefined && (
+                      <div className="mt-4">
+                        <div className="flex justify-between text-sm mb-1">
+                          <span className="text-gray-600">Model confidence</span>
+                          <span className="font-semibold text-amber-800">
+                            {(result.document_analysis.confidence * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                        <div className="w-full bg-amber-100 rounded-full h-2">
+                          <div
+                            className="h-2 rounded-full bg-amber-500 transition-all duration-500"
+                            style={{ width: `${Math.min(100, result.document_analysis.confidence * 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Main Result (standard classifiers) */}
+                {!result.document_analysis && result.label && (
                   <div className={`rounded-xl p-6 ${result.mcp_enhanced ? 'bg-gradient-to-r from-purple-50 to-indigo-50' : 'bg-gradient-to-r from-blue-50 to-indigo-50'}`}>
                     <p className="text-sm text-gray-500 mb-1">Predicted Label</p>
                     <p className="text-3xl font-bold text-gray-800 capitalize">{result.label}</p>
@@ -514,7 +615,7 @@ function App() {
                 )}
 
                 {/* Top-K Results */}
-                {result.top_k && result.top_k.length > 0 && (
+                {!result.document_analysis && result.top_k && result.top_k.length > 0 && (
                   <div>
                     <p className="text-sm font-medium text-gray-700 mb-2">Other Predictions</p>
                     <div className="space-y-2">

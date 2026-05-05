@@ -111,6 +111,47 @@ class StaticAgentDiscovery(AgentDiscovery):
             ttl_seconds=3600
         ))
 
+        # Document Analysis Agent (Org D)
+        self.agents.append(AgentRecord(
+            agent_id="org-d-document-clf-004",
+            name="Document Analysis Classifier - Organization D",
+            description=(
+                "An AI agent for document-oriented images and prompts: receipts, invoices, "
+                "forms, handwritten notes, and charts — OCR-oriented classification and text extraction."
+            ),
+            organization="records-services-d",
+            url="http://localhost:9004",
+            capabilities=AgentCapabilities(
+                skills=[AgentSkill(
+                    id="image_classification",
+                    name="Document Analysis & Classification",
+                    description=(
+                        "Classify document images and extract or summarize visible text for "
+                        "administrative automation."
+                    ),
+                    tags=[
+                        "document",
+                        "ocr",
+                        "receipt",
+                        "invoice",
+                        "form",
+                        "handwritten",
+                        "chart",
+                        "classification",
+                    ],
+                    input_modes=["image/jpeg", "image/png", "application/pdf"]
+                )]
+            ),
+            performance_metrics=AgentPerformanceMetrics(
+                avg_latency_ms=2000,
+                p95_latency_ms=4500,
+                success_rate=0.86,
+                throughput_rps=40
+            ),
+            last_heartbeat=datetime.utcnow(),
+            ttl_seconds=3600
+        ))
+
 
     async def discover(self, query: DiscoveryQuery) -> List[AgentRecord]:
         """

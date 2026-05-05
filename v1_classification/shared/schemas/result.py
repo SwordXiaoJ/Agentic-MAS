@@ -20,6 +20,13 @@ class ClassificationEvidence(BaseModel):
     model_version: Optional[str] = None
 
 
+class DocumentAnalysisSummary(BaseModel):
+    """Structured document agent output for UI (Org D)."""
+    document_type: str = Field(..., description="Inferred document category")
+    extracted_text: str = Field(..., description="Main text or summary from the document image")
+    confidence: float = Field(..., ge=0, le=1, description="Model confidence for type and extraction")
+
+
 class ClassificationResult(BaseModel):
     """Result from a single classifier agent"""
     request_id: str
@@ -34,6 +41,10 @@ class ClassificationResult(BaseModel):
     mcp_enhanced: bool = Field(False, description="Whether MCP tools were used")
     reasoning: Optional[str] = Field(None, description="Diagnostic reasoning (with MCP)")
     mcp_context: Optional[Dict[str, str]] = Field(None, description="MCP tool results (tool_name -> result text)")
+    document_analysis: Optional[DocumentAnalysisSummary] = Field(
+        None,
+        description="Present when the document analysis agent returned structured fields",
+    )
 
     class Config:
         json_schema_extra = {

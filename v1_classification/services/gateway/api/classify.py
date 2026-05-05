@@ -68,6 +68,18 @@ SUGGESTED_PROMPTS = [
         "prompt": "Identify the animal species in this image",
         "description": "Animal species identification",
         "domain": "general"
+    },
+    {
+        "id": "document-summary",
+        "prompt": "Summarize this document.",
+        "description": "Short summary",
+        "domain": "document"
+    },
+    {
+        "id": "document-read",
+        "prompt": "What kind of document is this?",
+        "description": "Type and text",
+        "domain": "document"
     }
 ]
 
@@ -81,7 +93,7 @@ def create_classify_api(minio_client: MinIOClient, planner_url: str) -> APIRoute
         Get suggested prompts for image classification.
 
         Args:
-            domain: Optional filter by domain (medical, satellite, general)
+            domain: Optional filter by domain (medical, satellite, general, document)
 
         Returns:
             List of suggested prompts with id, prompt, description, and domain

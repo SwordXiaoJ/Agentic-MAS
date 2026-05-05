@@ -27,6 +27,8 @@ from a2a.types import AgentCard, AgentCapabilities, AgentSkill
 from shared.schemas import (
     ClassificationRequest,
     ClassificationResult,
+    DocumentAnalysisSummary,
+    TopKPrediction,
     RouteDecision,
     SelectedAgent,
     ExecutionStrategy,
@@ -58,6 +60,34 @@ logger = logging.getLogger(__name__)
 MAX_REPLANS = 3
 
 
+def _parse_document_analysis_response(response_text: str) -> DocumentAnalysisSummary | None:
+    """Parse Org D document agent text output (JSON block appended by executor)."""
+    import json
+
+    if "Document Analysis Result (structured):" not in response_text or "JSON:\n" not in response_text:
+        return None
+    _, tail = response_text.rsplit("JSON:\n", 1)
+    tail = tail.strip()
+    try:
+        data = json.loads(tail)
+        if not isinstance(data, dict):
+            return None
+        dt = data.get("document_type")
+        et = data.get("extracted_text")
+        if dt is None or et is None:
+            return None
+        conf = float(data.get("confidence", 0.0))
+        conf = max(0.0, min(1.0, conf))
+        return DocumentAnalysisSummary(
+            document_type=str(dt).strip() or "other",
+            extracted_text=str(et).strip(),
+            confidence=conf,
+        )
+    except (json.JSONDecodeError, TypeError, ValueError) as e:
+        logger.debug("Document analysis JSON parse skipped: %s", e)
+        return None
+
+
 # ========== LLM-based Structured Outputs ==========
 
 class AgentSelection(BaseModel):
@@ -74,7 +104,11 @@ class AgentSelection(BaseModel):
 class IntentGuard(BaseModel):
     """Structured output for intent guard - checks if prompt is classification-related."""
     is_classification: bool = Field(
-        description="True if the user's prompt is related to image classification, recognition, or identification"
+        description=(
+            "True if the prompt asks to analyze the uploaded image: classification, recognition, "
+            "identification, scene/object/medical/satellite/document-image analysis, OCR, or text extraction "
+            "from a visible document or scan in the image"
+        )
     )
     reason: str = Field(description="Brief explanation of the decision")
 
@@ -248,24 +282,19 @@ class LangGraphPlannerAgent:
                     IntentGuard, strict=True
                 )
                 guard_sys = SystemMessage(
-                    content="""You are an intent guard for an image classification system.
+                    content="""You are an intent guard for an image-centric analysis system (classification and visual understanding).
 
-Your job is to determine whether the user's prompt is related to image classification, recognition, identification, or analysis.
+Your job is to determine whether the user's prompt asks to analyze the uploaded image (or its visible content). The user always supplies an image alongside the prompt.
 
-ACCEPT (is_classification=true):
-- "Classify this image"
-- "What type of medical scan is this?"
-- "Identify this satellite image"
-- "Is this a cat or a dog?"
-- "What disease does this X-ray show?"
-- Any prompt asking to analyze, classify, identify, or describe an image
+ACCEPT (is_classification=true) — including document photos and scans shown IN the image:
+- General: classify, identify objects/scenes, describe what is in the image
+- Medical / satellite: same as today (scans, land use, etc.)
+- Document images: what type of document, receipt vs invoice, OCR, read or extract text visible in the image, summarize the content of a document image/scan, "what kind of document is this"
+- Any prompt to analyze, classify, identify, read text from, or describe the supplied image
 
-REJECT (is_classification=false):
-- "Write me a poem"
-- "What is the weather today?"
-- "Help me with my homework"
-- "Tell me a joke"
-- Any prompt completely unrelated to image analysis"""
+REJECT (is_classification=false) — clearly not asking to interpret the uploaded image:
+- Pure chat: poems, weather, homework help, jokes, general knowledge with no image angle
+- Prompts that never reference seeing, reading, classifying, or describing image content"""
                 )
                 guard_result = await guard_llm.ainvoke([
                     guard_sys,
@@ -654,10 +683,24 @@ INSTRUCTIONS:
 
     def _parse_classification_result(self, response: Dict[str, Any], agent_id: str) -> ClassificationResult:
         """Parse A2A response into ClassificationResult"""
-        from shared.schemas import TopKPrediction
         try:
             import json
             response_text = response.get("response", "")
+
+            doc_summary = _parse_document_analysis_response(response_text)
+            if doc_summary:
+                label_key = doc_summary.document_type.replace("_", " ").strip() or "other"
+                label_display = label_key.title()
+                conf = doc_summary.confidence
+                return ClassificationResult(
+                    request_id=str(uuid4()),
+                    agent_id=agent_id,
+                    label=label_display,
+                    confidence=conf,
+                    top_k=[TopKPrediction(label=label_display, confidence=conf, rank=1)],
+                    latency_ms=0,
+                    document_analysis=doc_summary,
+                )
 
             # Try to parse as JSON
             if response_text.startswith("{"):

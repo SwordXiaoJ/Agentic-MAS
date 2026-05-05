@@ -11,7 +11,8 @@ from .result import (
     ClassificationResult,
     ClassificationResponse,
     TopKPrediction,
-    ClassificationEvidence
+    ClassificationEvidence,
+    DocumentAnalysisSummary,
 )
 from .agent_record import (
     AgentRecord,
@@ -49,6 +50,7 @@ __all__ = [
     "ClassificationResponse",
     "TopKPrediction",
     "ClassificationEvidence",
+    "DocumentAnalysisSummary",
     # Agent Record
     "AgentRecord",
     "AgentSkill",
